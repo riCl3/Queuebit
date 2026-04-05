@@ -7,7 +7,7 @@
     "queuebit": "./index.js"
   },
   "scripts": {
-    "build": "esbuild App.js --bundle --outfile=App.mjs --platform=node --format=esm --loader:.js=jsx --external:ink --external:react --external:react-dom --external:ink-big-text --external:ink-text-input --external:chalk --external:conf --external:axios --external:form-data --external:path --external:fs",
+    "build": "esbuild App.js --bundle --outfile=App.mjs --platform=node --format=esm --loader:.js=jsx --external:ink --external:react --external:react-dom --external:ink-big-text --external:ink-text-input --external:chalk --external:conf --external:axios --external:form-data --external:path --external:fs --external:socket.io-client",
     "start": "npm run build && node index.js"
   },
   "keywords": [
@@ -28,6 +28,7 @@
     "ink": "^6.8.0",
     "ink-big-text": "^2.0.0",
     "ink-text-input": "^6.0.0",
-    "react": "^19.2.4"
+    "react": "^19.2.4",
+    "socket.io-client": "^4.8.3"
   }
 }

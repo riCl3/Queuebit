@@ -4,6 +4,7 @@ const Redis = require('ioredis');
 const fs = require('fs').promises;
 const path = require('path');
 const dotenv = require('dotenv');
+const { io } = require('socket.io-client');
 
 const DocumentJob = require('./src/models/DocumentJob');
 
@@ -11,9 +12,12 @@ dotenv.config();
 
 const QUEUE_NAME = 'document-processing-queue';
 
-const connection = new Redis(process.env.REDIS_URI, {
+const redisURI = process.env.REDIS_URI;
+const isSSL = redisURI.startsWith('rediss://');
+
+const connection = new Redis(redisURI, {
   maxRetriesPerRequest: null,
-  tls: { rejectUnauthorized: false }
+  tls: isSSL ? {} : undefined
 });
 
 connection.on('connect', () => {
@@ -24,11 +28,26 @@ connection.on('error', (err) => {
   console.error('Worker Redis error:', err);
 });
 
-let ai;
+const socketClient = io(process.env.SOCKET_SERVER_URL || 'http://localhost:3000', {
+  transports: ['websocket'],
+  reconnection: true
+});
 
-const initAI = async () => {
+socketClient.on('connect', () => {
+  console.log('Worker socket connected to server');
+});
+
+socketClient.on('disconnect', () => {
+  console.log('Worker socket disconnected');
+});
+
+socketClient.on('connect_error', (err) => {
+  console.error('Worker socket connection error:', err.message);
+});
+
+const getAIClient = async (apiKey) => {
   const { GoogleGenAI } = await import('@google/genai');
-  ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  return new GoogleGenAI({ apiKey: apiKey || process.env.GEMINI_API_KEY });
 };
 
 const connectDB = async () => {
@@ -60,7 +79,7 @@ const connectDB = async () => {
     });
   } catch (error) {
     console.error('MongoDB connection failed:', error.message);
-    console.log('Warning: Worker will start without MongoDB');
+    throw error;
   }
 };
 
@@ -73,7 +92,7 @@ const disconnectDB = async () => {
   }
 };
 
-const extractDocumentData = async (filePath) => {
+const extractDocumentData = async (filePath, apiKey, model) => {
   const ext = path.extname(filePath).toLowerCase();
   let content;
 
@@ -88,17 +107,19 @@ const extractDocumentData = async (filePath) => {
     throw new Error('Unsupported file type');
   }
 
-  const model = 'gemini-3-flash-preview';
+  const aiModel = model || 'gemini-3-flash-preview';
 
   const prompt = `Extract all names, dates, and key action items from the following text content. Return ONLY a strict JSON object with no additional text. The JSON should have this structure: {"names": [], "dates": [], "actionItems": []}. If no data is found for a category, return an empty array.
 
 Text content:
 ${content}`;
 
+  const aiClient = await getAIClient(apiKey);
+
   const timeoutMs = 30000;
   const result = await Promise.race([
-    ai.models.generateContent({
-      model: model,
+    aiClient.models.generateContent({
+      model: aiModel,
       contents: prompt
     }),
     new Promise((_, reject) => setTimeout(() => reject(new Error('AI call timed out')), timeoutMs))
@@ -127,22 +148,8 @@ const deleteFile = async (filePath) => {
   }
 };
 
-const emitJobUpdate = async (jobId, status, extractedData = null, errorMessage = null) => {
-  const io = require('socket.io-client')(process.env.SOCKET_SERVER_URL || 'http://localhost:3000', {
-    transports: ['websocket'],
-    reconnection: true
-  });
-
-  io.on('connect', () => {
-    io.emit('job_updated', { jobId, status, extractedData, errorMessage });
-    io.disconnect();
-  });
-
-  setTimeout(() => {
-    if (io.connected) {
-      io.disconnect();
-    }
-  }, 2000);
+const emitJobUpdate = (jobId, status, extractedData = null, errorMessage = null) => {
+  socketClient.emit('job_updated', { jobId, status, extractedData, errorMessage });
 };
 
 let worker;
@@ -159,7 +166,7 @@ const startWorker = async () => {
       );
 
       try {
-        const extractedData = await extractDocumentData(job.data.filePath);
+        const extractedData = await extractDocumentData(job.data.filePath, job.data.apiKey, job.data.model);
 
         await DocumentJob.findOneAndUpdate(
           { jobId: job.data.jobId },
@@ -230,6 +237,11 @@ const gracefulShutdown = async (signal) => {
     console.error('Error closing Redis connection:', err.message);
   }
   
+  if (socketClient) {
+    socketClient.disconnect();
+    console.log('Socket client disconnected');
+  }
+  
   console.log('Graceful shutdown complete');
   process.exit(0);
 };
@@ -240,7 +252,6 @@ process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 const start = async () => {
   try {
     await connectDB();
-    await initAI();
     await startWorker();
     console.log('Worker started, waiting for jobs...');
   } catch (err) {

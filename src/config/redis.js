@@ -12,7 +12,7 @@ if (process.env.REDIS_URI) {
     host: url.hostname,
     port: parseInt(url.port) || 6379,
     password: url.password,
-    tls: isSSL ? { rejectUnauthorized: false } : undefined
+    tls: isSSL ? {} : undefined
   };
 } else {
   redisOptions = {

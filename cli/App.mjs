@@ -1,12 +1,12 @@
 // App.js
 import React, { useState, useEffect, useRef, useMemo, memo } from "react";
-import { Box, Text } from "ink";
-import TextInput from "ink-text-input";
+import { Box, Text, useStdin } from "ink";
 import Conf from "conf";
 import path from "path";
 import fs from "fs";
 import axios from "axios";
 import FormData from "form-data";
+import { io } from "socket.io-client";
 var conf = new Conf({
   projectName: "queuebit",
   defaults: {
@@ -42,7 +42,7 @@ var LOGO = [
 ];
 var SPINNER_FRAMES = ["\u280B", "\u2819", "\u2839", "\u2838", "\u283C", "\u2834", "\u2826", "\u2827", "\u2807", "\u280F"];
 var ROOT_COMMANDS = ["/upload ", "/model ", "/key ", "/clear", "/exit"];
-var MODELS = ["gemini-3-flash-preview", "gemini-1.5-pro", "gemini-2.0-flash-exp", "claude-3-haiku", "gpt-4o"];
+var MODELS = ["gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-flash", "gemini-2.5-flash"];
 var Logo = memo(() => /* @__PURE__ */ React.createElement(Box, { flexDirection: "column", alignItems: "center" }, LOGO.map((line, i) => /* @__PURE__ */ React.createElement(Text, { key: i, color: "#06b6d4", bold: true }, line))));
 function App() {
   const [query, setQuery] = useState("");
@@ -53,8 +53,9 @@ function App() {
   const [showDropdown, setShowDropdown] = useState(false);
   const [dropdownItems, setDropdownItems] = useState([]);
   const [spinnerFrame, setSpinnerFrame] = useState(0);
-  const pollingRef = useRef(null);
   const spinnerRef = useRef(null);
+  const socketRef = useRef(null);
+  const { setRawMode } = useStdin();
   const terminalHeight = useMemo(() => process.stdout.rows || 24, []);
   const activeModel = useMemo(() => conf.get("model") || "gemini-3-flash-preview", []);
   const filteredCommands = useMemo(() => {
@@ -77,8 +78,26 @@ function App() {
     };
   }, [mode]);
   useEffect(() => {
+    socketRef.current = io("http://localhost:3000", {
+      transports: ["websocket"],
+      reconnection: true
+    });
+    socketRef.current.on("job_updated", (data) => {
+      const { jobId, status, extractedData, errorMessage } = data;
+      if (status === "completed") {
+        setMode("result");
+        setUploadState({ status: "completed", jobId, result: extractedData, error: null });
+        addOutput("Job completed!", "green");
+      } else if (status === "failed") {
+        setMode("idle");
+        setUploadState({ status: "failed", jobId, result: null, error: errorMessage });
+        addOutput(`Job failed: ${errorMessage || "Unknown error"}`, "red");
+      }
+    });
     return () => {
-      if (pollingRef.current) clearInterval(pollingRef.current);
+      if (socketRef.current) {
+        socketRef.current.disconnect();
+      }
     };
   }, []);
   const addOutput = (text, color = "white") => setOutput((prev) => [...prev, { text, color, id: Date.now() + Math.random() }]);
@@ -91,6 +110,14 @@ function App() {
     }
     setCursorIndex(0);
   }, [query, filteredCommands]);
+  const selectFromDropdown = () => {
+    const selected = filteredCommands[cursorIndex] || filteredCommands[0];
+    if (selected) {
+      const newValue = query.startsWith("/model ") ? "/model " + selected + " " : selected;
+      setQuery(newValue);
+      setShowDropdown(false);
+    }
+  };
   const executeCommand = () => {
     const trimmed = query.trim();
     if (trimmed.startsWith("/model ")) {
@@ -148,7 +175,6 @@ function App() {
         const jobId = res.data.jobId;
         setMode("processing");
         setUploadState({ status: "processing", jobId, result: null, error: null });
-        startPolling(jobId);
         addOutput(`Uploading: ${filePath}`, "blue");
         addOutput(`Job ID: ${jobId}`, "yellow");
       }).catch((err) => {
@@ -159,77 +185,77 @@ function App() {
     }
     if (trimmed) addOutput(`Unknown command: ${trimmed}`, "red");
   };
-  const startPolling = (jobId) => {
-    pollingRef.current = setInterval(() => {
-      api.get(`/api/job/${jobId}`).then((res) => {
-        const status = res.data.status;
-        if (status === "completed") {
-          clearInterval(pollingRef.current);
-          pollingRef.current = null;
-          setMode("result");
-          setUploadState({ status: "completed", jobId, result: res.data.extractedData, error: null });
-          addOutput("Job completed!", "green");
-        } else if (status === "failed") {
-          clearInterval(pollingRef.current);
-          pollingRef.current = null;
-          setMode("idle");
-          setUploadState({ status: "failed", jobId, result: null, error: res.data.error });
-          addOutput(`Job failed: ${res.data.error || "Unknown error"}`, "red");
-        }
-      }).catch(() => addOutput("Job check failed", "red"));
-    }, 2e3);
-  };
   const returnToInput = () => {
     setMode("idle");
     setUploadState({ status: "", jobId: "", result: null, error: null });
     setOutput([]);
   };
-  const handleKeyDown = (key) => {
-    if (mode === "result" && (key.name === "escape" || key.escape)) {
-      returnToInput();
-      return;
-    }
-    if (!showDropdown) return;
-    if (key.name === "tab") {
-      const selected = filteredCommands[cursorIndex];
-      if (selected) {
-        const newValue = query.startsWith("/model ") ? "/model " + selected + " " : selected;
-        setQuery(newValue);
-        setShowDropdown(false);
+  useEffect(() => {
+    setRawMode(true);
+    const handleData = (data) => {
+      const buf = Buffer.from(data);
+      if (mode === "result") {
+        if (buf[0] === 27) {
+          returnToInput();
+        }
+        return;
       }
-    } else if (key.name === "up") {
-      setCursorIndex((prev) => prev > 0 ? prev - 1 : filteredCommands.length - 1);
-    } else if (key.name === "down") {
-      setCursorIndex((prev) => prev < filteredCommands.length - 1 ? prev + 1 : 0);
-    } else if (key.name === "return") {
-      const selected = filteredCommands[cursorIndex];
-      if (selected) {
-        const newValue = query.startsWith("/model ") ? "/model " + selected + " " : selected;
-        setQuery(newValue);
-        setShowDropdown(false);
+      if (mode !== "idle") return;
+      if (buf[0] === 3) {
+        process.exit(0);
+        return;
       }
-    } else if (key.name === "escape") {
-      setShowDropdown(false);
-    }
-  };
-  const renderInputBox = () => /* @__PURE__ */ React.createElement(Box, { width: 80, flexDirection: "column" }, /* @__PURE__ */ React.createElement(Box, { borderStyle: "round", borderColor: showDropdown ? "cyan" : "gray", backgroundColor: "#1E1B2E" }, /* @__PURE__ */ React.createElement(Text, { color: "gray" }, "\u258C"), /* @__PURE__ */ React.createElement(Box, { flexGrow: 1 }, /* @__PURE__ */ React.createElement(
-    TextInput,
-    {
-      value: query,
-      onChange: (val) => {
-        setQuery(val);
-        setCursorIndex(0);
-      },
-      placeholder: "Type / for commands...",
-      placeholderColor: "gray",
-      onSubmit: executeCommand
-    }
-  ))), showDropdown && filteredCommands.length > 0 && /* @__PURE__ */ React.createElement(Box, { flexDirection: "column", marginTop: 1, borderStyle: "round", borderColor: "gray", backgroundColor: "#1E1B2E" }, filteredCommands.map((item, index) => /* @__PURE__ */ React.createElement(Box, { key: index, paddingX: 1, backgroundColor: index === cursorIndex ? "#06b6d4" : "transparent" }, /* @__PURE__ */ React.createElement(Text, { color: index === cursorIndex ? "black" : "gray", bold: index === cursorIndex }, index === cursorIndex ? "\u25B6 " : "  ", item)))));
+      if (buf[0] === 27) {
+        if (buf[1] === 91) {
+          if (buf[2] === 65) {
+            if (showDropdown && filteredCommands.length > 0) {
+              setCursorIndex((prev) => prev > 0 ? prev - 1 : filteredCommands.length - 1);
+            }
+          } else if (buf[2] === 66) {
+            if (showDropdown && filteredCommands.length > 0) {
+              setCursorIndex((prev) => prev < filteredCommands.length - 1 ? prev + 1 : 0);
+            }
+          }
+        } else if (buf[1] === void 0) {
+          setShowDropdown(false);
+        }
+        return;
+      }
+      if (buf[0] === 127 || buf[0] === 8) {
+        setQuery((prev) => prev.slice(0, -1));
+        return;
+      }
+      if (buf[0] === 9) {
+        if (showDropdown && filteredCommands.length > 0) {
+          selectFromDropdown();
+        }
+        return;
+      }
+      if (buf[0] === 13 || buf[0] === 10) {
+        if (showDropdown && filteredCommands.length > 0) {
+          selectFromDropdown();
+        } else {
+          executeCommand();
+        }
+        return;
+      }
+      const char = buf.toString("utf8");
+      if (char.length === 1 && char >= " " && char !== "\x7F") {
+        setQuery((prev) => prev + char);
+      }
+    };
+    process.stdin.on("data", handleData);
+    return () => {
+      process.stdin.removeListener("data", handleData);
+      setRawMode(false);
+    };
+  }, [mode, showDropdown, filteredCommands, cursorIndex, query]);
+  const renderInputBox = () => /* @__PURE__ */ React.createElement(Box, { width: 80, flexDirection: "column" }, /* @__PURE__ */ React.createElement(Box, { borderStyle: "round", borderColor: showDropdown ? "cyan" : "gray", backgroundColor: "#1E1B2E" }, /* @__PURE__ */ React.createElement(Text, { color: "gray" }, "\u258C"), /* @__PURE__ */ React.createElement(Box, { flexGrow: 1 }, /* @__PURE__ */ React.createElement(Text, { color: "white" }, query || "", /* @__PURE__ */ React.createElement(Text, { color: "gray" }, query ? "" : "Type / for commands...")))), showDropdown && filteredCommands.length > 0 && /* @__PURE__ */ React.createElement(Box, { flexDirection: "column", marginTop: 1, borderStyle: "round", borderColor: "gray", backgroundColor: "#1E1B2E" }, filteredCommands.map((item, index) => /* @__PURE__ */ React.createElement(Box, { key: index, paddingX: 1, backgroundColor: index === cursorIndex ? "#06b6d4" : "transparent" }, /* @__PURE__ */ React.createElement(Text, { color: index === cursorIndex ? "black" : "gray", bold: index === cursorIndex }, index === cursorIndex ? "\u25B6 " : "  ", item)))));
   const renderProcessingBox = () => /* @__PURE__ */ React.createElement(Box, { width: 80, borderStyle: "round", borderColor: "yellow", backgroundColor: "#1E1B2E" }, /* @__PURE__ */ React.createElement(Text, { color: "yellow" }, SPINNER_FRAMES[spinnerFrame]), /* @__PURE__ */ React.createElement(Text, { color: "white" }, "  "), /* @__PURE__ */ React.createElement(Text, { color: "yellow" }, mode === "uploading" ? "Uploading..." : `Processing... Job ID: ${uploadState.jobId.substring(0, 8)}...`));
   const renderResultBox = () => /* @__PURE__ */ React.createElement(Box, { flexDirection: "column", width: 80, borderStyle: "round", borderColor: "green", backgroundColor: "#1E1B2E", paddingX: 1 }, /* @__PURE__ */ React.createElement(Text, { color: "green", bold: true }, "\u2713 Job Completed"), /* @__PURE__ */ React.createElement(Text, { color: "gray" }, "Job ID: ", uploadState.jobId), /* @__PURE__ */ React.createElement(Text, { color: "gray" }, "\u2500".repeat(50)), /* @__PURE__ */ React.createElement(Text, { color: "cyan" }, JSON.stringify(uploadState.result, null, 2)), /* @__PURE__ */ React.createElement(Text, { color: "gray" }, "\u2500".repeat(50)), /* @__PURE__ */ React.createElement(Text, { color: "gray" }, "Press Escape to return"));
   const StatusBar = memo(() => /* @__PURE__ */ React.createElement(Box, { width: 80, justifyContent: "space-between", marginTop: 1 }, /* @__PURE__ */ React.createElement(Text, { color: "cyan", bold: true }, "\u26A1 QueueBit Core"), /* @__PURE__ */ React.createElement(Text, { color: "magenta" }, "Model: ", activeModel), /* @__PURE__ */ React.createElement(Text, { color: "green" }, "Status: Online")));
   const Footer = memo(() => /* @__PURE__ */ React.createElement(Box, { width: "100%", flexDirection: "column", alignItems: "center", justifyContent: "flex-end", height: 3 }, /* @__PURE__ */ React.createElement(Box, { width: "100%", flexDirection: "row", justifyContent: "flex-end" }, /* @__PURE__ */ React.createElement(Text, { color: "gray" }, "\u2191\u2193 navigate  Tab complete  Enter select")), /* @__PURE__ */ React.createElement(Box, { flexDirection: "row", alignItems: "center", marginTop: 1 }, /* @__PURE__ */ React.createElement(Text, { color: "yellow" }, "\u2022"), /* @__PURE__ */ React.createElement(Text, { color: "gray" }, "  Tip: Type /upload <path> to queue a document extraction"))));
-  return /* @__PURE__ */ React.createElement(Box, { flexDirection: "column", alignItems: "center", width: "100%", height: terminalHeight, backgroundColor: "#13111C", onKeyPress: handleKeyDown }, /* @__PURE__ */ React.createElement(Box, { flexDirection: "column", alignItems: "center", flexGrow: 1, justifyContent: "center" }, /* @__PURE__ */ React.createElement(Logo, null), /* @__PURE__ */ React.createElement(Box, { marginTop: 1 }, mode === "idle" && renderInputBox(), (mode === "uploading" || mode === "processing") && renderProcessingBox(), mode === "result" && renderResultBox()), /* @__PURE__ */ React.createElement(StatusBar, null)), mode === "idle" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Box, { flexDirection: "column", width: 80, marginTop: 1, flexGrow: 1 }, output.slice(-15).map((item) => /* @__PURE__ */ React.createElement(Text, { key: item.id, color: item.color === "white" ? "#e4e4e7" : item.color === "green" ? "#22c55e" : item.color === "red" ? "#ef4444" : item.color === "yellow" ? "#f59e0b" : item.color === "blue" ? "#3b82f6" : "#71717a" }, item.text))), /* @__PURE__ */ React.createElement(Footer, null)));
+  return /* @__PURE__ */ React.createElement(Box, { flexDirection: "column", alignItems: "center", width: "100%", height: terminalHeight, backgroundColor: "#13111C" }, /* @__PURE__ */ React.createElement(Box, { flexDirection: "column", alignItems: "center", flexGrow: 1, justifyContent: "center" }, /* @__PURE__ */ React.createElement(Logo, null), /* @__PURE__ */ React.createElement(Box, { marginTop: 1 }, mode === "idle" && renderInputBox(), (mode === "uploading" || mode === "processing") && renderProcessingBox(), mode === "result" && renderResultBox()), /* @__PURE__ */ React.createElement(StatusBar, null)), mode === "idle" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Box, { flexDirection: "column", width: 80, marginTop: 1, flexGrow: 1 }, output.slice(-15).map((item) => /* @__PURE__ */ React.createElement(Text, { key: item.id, color: item.color === "white" ? "#e4e4e7" : item.color === "green" ? "#22c55e" : item.color === "red" ? "#ef4444" : item.color === "yellow" ? "#f59e0b" : item.color === "blue" ? "#3b82f6" : "#71717a" }, item.text))), /* @__PURE__ */ React.createElement(Footer, null)));
 }
 export {
   App as default

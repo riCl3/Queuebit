@@ -13,12 +13,18 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: '*',
+    origin: process.env.CORS_ORIGIN || 'http://localhost:3000',
     methods: ['GET', 'POST']
   }
 });
 
 app.set('io', io);
+
+io.on('connection', (socket) => {
+  socket.on('job_updated', (data) => {
+    io.emit('job_updated', data);
+  });
+});
 
 const PORT = process.env.PORT || 3000;
 

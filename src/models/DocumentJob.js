@@ -29,7 +29,7 @@ const documentJobSchema = new mongoose.Schema({
   timestamps: true
 });
 
-documentJobSchema.index({ createdAt: 1 });
+documentJobSchema.index({ createdAt: 1 }, { expireAfterSeconds: 30 * 24 * 60 * 60 });
 documentJobSchema.index({ updatedAt: 1 });
 
 module.exports = mongoose.model('DocumentJob', documentJobSchema);
