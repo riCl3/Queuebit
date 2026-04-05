@@ -16,7 +16,13 @@ const storage = multer.diskStorage({
 
 const fileFilter = (req, file, cb) => {
   const allowedTypes = ['application/pdf', 'text/plain'];
-  if (allowedTypes.includes(file.mimetype)) {
+  const allowedExtensions = ['.pdf', '.txt'];
+  const ext = path.extname(file.originalname).toLowerCase();
+  
+  console.log('File mimetype:', file.mimetype);
+  console.log('File extension:', ext);
+  
+  if (allowedTypes.includes(file.mimetype) || allowedExtensions.includes(ext)) {
     cb(null, true);
   } else {
     cb(new Error('Invalid file type. Only PDF and text files are allowed.'), false);
@@ -38,7 +44,11 @@ const uploadDocument = async (req, res) => {
       return res.status(400).json({ error: 'No file uploaded' });
     }
 
+    console.log('File uploaded:', file);
+    console.log('Adding job to queue...');
+
     const jobId = uuidv4();
+    console.log('Generated jobId:', jobId);
 
     const documentJob = new DocumentJob({
       jobId,
@@ -46,12 +56,16 @@ const uploadDocument = async (req, res) => {
       originalFileName: file.originalname
     });
 
+    console.log('Saving DocumentJob...');
     await documentJob.save();
+    console.log('DocumentJob saved:', jobId);
 
+    console.log('Adding to queue with filePath:', file.path);
     await documentQueue.add('process-document', {
       jobId,
       filePath: file.path
     });
+    console.log('Job added to queue');
 
     res.status(202).json({
       message: 'File uploaded successfully',
@@ -59,7 +73,8 @@ const uploadDocument = async (req, res) => {
     });
   } catch (error) {
     console.error('Upload error:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    console.error('Stack:', error.stack);
+    res.status(500).json({ error: 'Internal server error', details: error.message, stack: error.stack });
   }
 };
 

@@ -1,13 +1,25 @@
 const express = require('express');
+const http = require('http');
+const { Server } = require('socket.io');
 const mongoose = require('mongoose');
 const dotenv = require('dotenv');
-const connectDB = require('./src/config/db');
-const { redisClient, connectRedis } = require('./src/config/redis');
+const { connectDB, disconnectDB } = require('./src/config/db');
+const { redisClient, connectRedis, disconnectRedis } = require('./src/config/redis');
 const apiRoutes = require('./src/routes/api');
 
 dotenv.config();
 
 const app = express();
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: {
+    origin: '*',
+    methods: ['GET', 'POST']
+  }
+});
+
+app.set('io', io);
+
 const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
@@ -20,27 +32,52 @@ app.get('/', (req, res) => {
 });
 
 app.get('/health', (req, res) => {
+  const mongoStatus = mongoose.connection.readyState === 1 ? 'connected' : 'disconnected';
+  const redisStatus = redisClient.status === 'ready' ? 'connected' : 'disconnected';
+  
   res.json({ 
     status: 'ok', 
-    mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
-    redis: redisClient.status === 'ready' ? 'connected' : 'disconnected'
+    mongodb: mongoStatus,
+    redis: redisStatus
   });
 });
 
+const gracefulShutdown = async (signal) => {
+  console.log(`\n${signal} received. Starting graceful shutdown...`);
+  
+  server.close(async () => {
+    console.log('HTTP server closed');
+    
+    try {
+      await disconnectDB();
+    } catch (err) {
+      console.error('Error disconnecting MongoDB:', err.message);
+    }
+    
+    try {
+      await disconnectRedis();
+    } catch (err) {
+      console.error('Error disconnecting Redis:', err.message);
+    }
+    
+    console.log('Graceful shutdown complete');
+    process.exit(0);
+  });
+  
+  setTimeout(() => {
+    console.error('Forced shutdown after timeout');
+    process.exit(1);
+  }, 10000);
+};
+
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+
 const startServer = async () => {
-  try {
-    await connectDB();
-  } catch (err) {
-    console.log('Continuing without MongoDB');
-  }
+  await connectDB();
+  await connectRedis();
   
-  try {
-    await connectRedis();
-  } catch (err) {
-    console.log('Continuing without Redis');
-  }
-  
-  app.listen(PORT, () => {
+  server.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
     console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
   });
