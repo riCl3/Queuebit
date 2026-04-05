@@ -1,0 +1,236 @@
+// App.js
+import React, { useState, useEffect, useRef, useMemo, memo } from "react";
+import { Box, Text } from "ink";
+import TextInput from "ink-text-input";
+import Conf from "conf";
+import path from "path";
+import fs from "fs";
+import axios from "axios";
+import FormData from "form-data";
+var conf = new Conf({
+  projectName: "queuebit",
+  defaults: {
+    apiKey: "",
+    model: "gemini-3-flash-preview"
+  }
+});
+var api = axios.create({
+  baseURL: "http://localhost:3000",
+  timeout: 3e4,
+  headers: {
+    "Content-Type": "application/json"
+  }
+});
+api.interceptors.request.use((requestConfig) => {
+  const apiKey = conf.get("apiKey");
+  const model = conf.get("model");
+  if (apiKey) {
+    requestConfig.headers["X-API-Key"] = apiKey;
+  }
+  if (model) {
+    requestConfig.headers["X-Model"] = model;
+  }
+  return requestConfig;
+});
+var LOGO = [
+  " \u2588\u2588\u2588\u2588\u2588\u2588\u2557 \u2588\u2588\u2557   \u2588\u2588\u2557\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2557\u2588\u2588\u2557   \u2588\u2588\u2557\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2557\u2588\u2588\u2588\u2588\u2588\u2588\u2557 \u2588\u2588\u2557\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2557",
+  "\u2588\u2588\u2554\u2550\u2550\u2550\u2588\u2588\u2557\u2588\u2588\u2551   \u2588\u2588\u2551\u2588\u2588\u2554\u2550\u2550\u2550\u2550\u255D\u2588\u2588\u2551   \u2588\u2588\u2551\u2588\u2588\u2554\u2550\u2550\u2550\u2550\u255D\u2588\u2588\u2554\u2550\u2550\u2588\u2588\u2557\u2588\u2588\u2551\u255A\u2550\u2550\u2588\u2588\u2554\u2550\u2550\u255D",
+  "\u2588\u2588\u2551   \u2588\u2588\u2551\u2588\u2588\u2551   \u2588\u2588\u2551\u2588\u2588\u2588\u2588\u2588\u2557  \u2588\u2588\u2551   \u2588\u2588\u2551\u2588\u2588\u2588\u2588\u2588\u2557  \u2588\u2588\u2588\u2588\u2588\u2588\u2554\u255D\u2588\u2588\u2551   \u2588\u2588\u2551   ",
+  "\u2588\u2588\u2551\u2584\u2584 \u2588\u2588\u2551\u2588\u2588\u2551   \u2588\u2588\u2551\u2588\u2588\u2554\u2550\u2550\u255D  \u2588\u2588\u2551   \u2588\u2588\u2551\u2588\u2588\u2554\u2550\u2550\u255D  \u2588\u2588\u2554\u2550\u2550\u2588\u2588\u2557\u2588\u2588\u2551   \u2588\u2588\u2551   ",
+  "\u255A\u2588\u2588\u2588\u2588\u2588\u2588\u2554\u255D\u255A\u2588\u2588\u2588\u2588\u2588\u2588\u2554\u255D\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2557\u255A\u2588\u2588\u2588\u2588\u2588\u2588\u2554\u255D\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2557\u2588\u2588\u2588\u2588\u2588\u2588\u2554\u255D\u2588\u2588\u2551   \u2588\u2588\u2551   ",
+  " \u255A\u2550\u2550\u2580\u2580\u2550\u255D  \u255A\u2550\u2550\u2550\u2550\u2550\u255D \u255A\u2550\u2550\u2550\u2550\u2550\u2550\u255D \u255A\u2550\u2550\u2550\u2550\u2550\u255D \u255A\u2550\u2550\u2550\u2550\u2550\u2550\u255D\u255A\u2550\u2550\u2550\u2550\u2550\u255D \u255A\u2550\u255D   \u255A\u2550\u255D   "
+];
+var SPINNER_FRAMES = ["\u280B", "\u2819", "\u2839", "\u2838", "\u283C", "\u2834", "\u2826", "\u2827", "\u2807", "\u280F"];
+var ROOT_COMMANDS = ["/upload ", "/model ", "/key ", "/clear", "/exit"];
+var MODELS = ["gemini-3-flash-preview", "gemini-1.5-pro", "gemini-2.0-flash-exp", "claude-3-haiku", "gpt-4o"];
+var Logo = memo(() => /* @__PURE__ */ React.createElement(Box, { flexDirection: "column", alignItems: "center" }, LOGO.map((line, i) => /* @__PURE__ */ React.createElement(Text, { key: i, color: "#06b6d4", bold: true }, line))));
+function App() {
+  const [query, setQuery] = useState("");
+  const [mode, setMode] = useState("idle");
+  const [uploadState, setUploadState] = useState({ status: "", jobId: "", result: null, error: null });
+  const [output, setOutput] = useState([]);
+  const [cursorIndex, setCursorIndex] = useState(0);
+  const [showDropdown, setShowDropdown] = useState(false);
+  const [dropdownItems, setDropdownItems] = useState([]);
+  const [spinnerFrame, setSpinnerFrame] = useState(0);
+  const pollingRef = useRef(null);
+  const spinnerRef = useRef(null);
+  const terminalHeight = useMemo(() => process.stdout.rows || 24, []);
+  const activeModel = useMemo(() => conf.get("model") || "gemini-3-flash-preview", []);
+  const filteredCommands = useMemo(() => {
+    if (query.startsWith("/model ")) {
+      const filter = query.replace("/model ", "").toLowerCase();
+      return MODELS.filter((m) => m.toLowerCase().includes(filter));
+    }
+    if (query.startsWith("/")) {
+      const filter = query.slice(1).toLowerCase();
+      return ROOT_COMMANDS.filter((cmd) => cmd.replace("/", "").startsWith(filter));
+    }
+    return [];
+  }, [query]);
+  useEffect(() => {
+    if (mode === "processing" || mode === "uploading") {
+      spinnerRef.current = setInterval(() => setSpinnerFrame((f) => (f + 1) % SPINNER_FRAMES.length), 80);
+    }
+    return () => {
+      if (spinnerRef.current) clearInterval(spinnerRef.current);
+    };
+  }, [mode]);
+  useEffect(() => {
+    return () => {
+      if (pollingRef.current) clearInterval(pollingRef.current);
+    };
+  }, []);
+  const addOutput = (text, color = "white") => setOutput((prev) => [...prev, { text, color, id: Date.now() + Math.random() }]);
+  useEffect(() => {
+    if (query.startsWith("/model ") || query.startsWith("/")) {
+      setDropdownItems(filteredCommands);
+      setShowDropdown(filteredCommands.length > 0);
+    } else {
+      setShowDropdown(false);
+    }
+    setCursorIndex(0);
+  }, [query, filteredCommands]);
+  const executeCommand = () => {
+    const trimmed = query.trim();
+    if (trimmed.startsWith("/model ")) {
+      const model = trimmed.replace("/model ", "").trim();
+      if (model && MODELS.includes(model)) {
+        conf.set("model", model);
+        setQuery("");
+        addOutput(`Model set to: ${model}`, "green");
+      } else if (model) {
+        addOutput(`Invalid model: ${model}`, "red");
+      }
+      return;
+    }
+    if (trimmed.startsWith("/key ")) {
+      const key = trimmed.replace("/key ", "").trim();
+      if (key) {
+        conf.set("apiKey", key);
+        setQuery("");
+        addOutput("API key saved!", "green");
+      }
+      return;
+    }
+    if (trimmed === "/clear") {
+      setQuery("");
+      setOutput([]);
+      addOutput("Terminal cleared", "gray");
+      return;
+    }
+    if (trimmed === "/exit") {
+      process.exit(0);
+      return;
+    }
+    if (trimmed.startsWith("/upload ")) {
+      const filePath = trimmed.replace("/upload ", "").trim();
+      if (!filePath) {
+        addOutput("Usage: /upload <path>", "red");
+        return;
+      }
+      const resolvedPath = path.resolve(filePath);
+      if (!fs.existsSync(resolvedPath)) {
+        addOutput(`File not found: ${resolvedPath}`, "red");
+        return;
+      }
+      if (!conf.get("apiKey")) {
+        addOutput("API key not set. Use /key <your-key>", "red");
+        return;
+      }
+      setMode("uploading");
+      setUploadState({ status: "uploading", jobId: "", result: null, error: null });
+      setQuery("");
+      const form = new FormData();
+      form.append("document", fs.createReadStream(resolvedPath));
+      form.append("model", conf.get("model"));
+      api.post("/api/upload", form, { headers: form.getHeaders() }).then((res) => {
+        const jobId = res.data.jobId;
+        setMode("processing");
+        setUploadState({ status: "processing", jobId, result: null, error: null });
+        startPolling(jobId);
+        addOutput(`Uploading: ${filePath}`, "blue");
+        addOutput(`Job ID: ${jobId}`, "yellow");
+      }).catch((err) => {
+        setMode("idle");
+        addOutput(`Upload failed: ${err.message}`, "red");
+      });
+      return;
+    }
+    if (trimmed) addOutput(`Unknown command: ${trimmed}`, "red");
+  };
+  const startPolling = (jobId) => {
+    pollingRef.current = setInterval(() => {
+      api.get(`/api/job/${jobId}`).then((res) => {
+        const status = res.data.status;
+        if (status === "completed") {
+          clearInterval(pollingRef.current);
+          pollingRef.current = null;
+          setMode("result");
+          setUploadState({ status: "completed", jobId, result: res.data.extractedData, error: null });
+          addOutput("Job completed!", "green");
+        } else if (status === "failed") {
+          clearInterval(pollingRef.current);
+          pollingRef.current = null;
+          setMode("idle");
+          setUploadState({ status: "failed", jobId, result: null, error: res.data.error });
+          addOutput(`Job failed: ${res.data.error || "Unknown error"}`, "red");
+        }
+      }).catch(() => addOutput("Job check failed", "red"));
+    }, 2e3);
+  };
+  const returnToInput = () => {
+    setMode("idle");
+    setUploadState({ status: "", jobId: "", result: null, error: null });
+    setOutput([]);
+  };
+  const handleKeyDown = (key) => {
+    if (mode === "result" && (key.name === "escape" || key.escape)) {
+      returnToInput();
+      return;
+    }
+    if (!showDropdown) return;
+    if (key.name === "tab") {
+      const selected = filteredCommands[cursorIndex];
+      if (selected) {
+        const newValue = query.startsWith("/model ") ? "/model " + selected + " " : selected;
+        setQuery(newValue);
+        setShowDropdown(false);
+      }
+    } else if (key.name === "up") {
+      setCursorIndex((prev) => prev > 0 ? prev - 1 : filteredCommands.length - 1);
+    } else if (key.name === "down") {
+      setCursorIndex((prev) => prev < filteredCommands.length - 1 ? prev + 1 : 0);
+    } else if (key.name === "return") {
+      const selected = filteredCommands[cursorIndex];
+      if (selected) {
+        const newValue = query.startsWith("/model ") ? "/model " + selected + " " : selected;
+        setQuery(newValue);
+        setShowDropdown(false);
+      }
+    } else if (key.name === "escape") {
+      setShowDropdown(false);
+    }
+  };
+  const renderInputBox = () => /* @__PURE__ */ React.createElement(Box, { width: 80, flexDirection: "column" }, /* @__PURE__ */ React.createElement(Box, { borderStyle: "round", borderColor: showDropdown ? "cyan" : "gray", backgroundColor: "#1E1B2E" }, /* @__PURE__ */ React.createElement(Text, { color: "gray" }, "\u258C"), /* @__PURE__ */ React.createElement(Box, { flexGrow: 1 }, /* @__PURE__ */ React.createElement(
+    TextInput,
+    {
+      value: query,
+      onChange: (val) => {
+        setQuery(val);
+        setCursorIndex(0);
+      },
+      placeholder: "Type / for commands...",
+      placeholderColor: "gray",
+      onSubmit: executeCommand
+    }
+  ))), showDropdown && filteredCommands.length > 0 && /* @__PURE__ */ React.createElement(Box, { flexDirection: "column", marginTop: 1, borderStyle: "round", borderColor: "gray", backgroundColor: "#1E1B2E" }, filteredCommands.map((item, index) => /* @__PURE__ */ React.createElement(Box, { key: index, paddingX: 1, backgroundColor: index === cursorIndex ? "#06b6d4" : "transparent" }, /* @__PURE__ */ React.createElement(Text, { color: index === cursorIndex ? "black" : "gray", bold: index === cursorIndex }, index === cursorIndex ? "\u25B6 " : "  ", item)))));
+  const renderProcessingBox = () => /* @__PURE__ */ React.createElement(Box, { width: 80, borderStyle: "round", borderColor: "yellow", backgroundColor: "#1E1B2E" }, /* @__PURE__ */ React.createElement(Text, { color: "yellow" }, SPINNER_FRAMES[spinnerFrame]), /* @__PURE__ */ React.createElement(Text, { color: "white" }, "  "), /* @__PURE__ */ React.createElement(Text, { color: "yellow" }, mode === "uploading" ? "Uploading..." : `Processing... Job ID: ${uploadState.jobId.substring(0, 8)}...`));
+  const renderResultBox = () => /* @__PURE__ */ React.createElement(Box, { flexDirection: "column", width: 80, borderStyle: "round", borderColor: "green", backgroundColor: "#1E1B2E", paddingX: 1 }, /* @__PURE__ */ React.createElement(Text, { color: "green", bold: true }, "\u2713 Job Completed"), /* @__PURE__ */ React.createElement(Text, { color: "gray" }, "Job ID: ", uploadState.jobId), /* @__PURE__ */ React.createElement(Text, { color: "gray" }, "\u2500".repeat(50)), /* @__PURE__ */ React.createElement(Text, { color: "cyan" }, JSON.stringify(uploadState.result, null, 2)), /* @__PURE__ */ React.createElement(Text, { color: "gray" }, "\u2500".repeat(50)), /* @__PURE__ */ React.createElement(Text, { color: "gray" }, "Press Escape to return"));
+  const StatusBar = memo(() => /* @__PURE__ */ React.createElement(Box, { width: 80, justifyContent: "space-between", marginTop: 1 }, /* @__PURE__ */ React.createElement(Text, { color: "cyan", bold: true }, "\u26A1 QueueBit Core"), /* @__PURE__ */ React.createElement(Text, { color: "magenta" }, "Model: ", activeModel), /* @__PURE__ */ React.createElement(Text, { color: "green" }, "Status: Online")));
+  const Footer = memo(() => /* @__PURE__ */ React.createElement(Box, { width: "100%", flexDirection: "column", alignItems: "center", justifyContent: "flex-end", height: 3 }, /* @__PURE__ */ React.createElement(Box, { width: "100%", flexDirection: "row", justifyContent: "flex-end" }, /* @__PURE__ */ React.createElement(Text, { color: "gray" }, "\u2191\u2193 navigate  Tab complete  Enter select")), /* @__PURE__ */ React.createElement(Box, { flexDirection: "row", alignItems: "center", marginTop: 1 }, /* @__PURE__ */ React.createElement(Text, { color: "yellow" }, "\u2022"), /* @__PURE__ */ React.createElement(Text, { color: "gray" }, "  Tip: Type /upload <path> to queue a document extraction"))));
+  return /* @__PURE__ */ React.createElement(Box, { flexDirection: "column", alignItems: "center", width: "100%", height: terminalHeight, backgroundColor: "#13111C", onKeyPress: handleKeyDown }, /* @__PURE__ */ React.createElement(Box, { flexDirection: "column", alignItems: "center", flexGrow: 1, justifyContent: "center" }, /* @__PURE__ */ React.createElement(Logo, null), /* @__PURE__ */ React.createElement(Box, { marginTop: 1 }, mode === "idle" && renderInputBox(), (mode === "uploading" || mode === "processing") && renderProcessingBox(), mode === "result" && renderResultBox()), /* @__PURE__ */ React.createElement(StatusBar, null)), mode === "idle" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Box, { flexDirection: "column", width: 80, marginTop: 1, flexGrow: 1 }, output.slice(-15).map((item) => /* @__PURE__ */ React.createElement(Text, { key: item.id, color: item.color === "white" ? "#e4e4e7" : item.color === "green" ? "#22c55e" : item.color === "red" ? "#ef4444" : item.color === "yellow" ? "#f59e0b" : item.color === "blue" ? "#3b82f6" : "#71717a" }, item.text))), /* @__PURE__ */ React.createElement(Footer, null)));
+}
+export {
+  App as default
+};

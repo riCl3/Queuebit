@@ -1,0 +1,33 @@
+{
+  "name": "queuebit",
+  "version": "1.0.0",
+  "description": "File processing CLI tool",
+  "main": "index.js",
+  "bin": {
+    "queuebit": "./index.js"
+  },
+  "scripts": {
+    "build": "esbuild App.js --bundle --outfile=App.mjs --platform=node --format=esm --loader:.js=jsx --external:ink --external:react --external:react-dom --external:ink-big-text --external:ink-text-input --external:chalk --external:conf --external:axios --external:form-data --external:path --external:fs",
+    "start": "npm run build && node index.js"
+  },
+  "keywords": [
+    "cli",
+    "file-processing",
+    "queue"
+  ],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "axios": "^1.14.0",
+    "blessed": "^0.1.81",
+    "chalk": "^5.6.2",
+    "conf": "^15.1.0",
+    "esbuild": "^0.28.0",
+    "form-data": "^4.0.5",
+    "ink": "^6.8.0",
+    "ink-big-text": "^2.0.0",
+    "ink-text-input": "^6.0.0",
+    "react": "^19.2.4"
+  }
+}
