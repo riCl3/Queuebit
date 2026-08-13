@@ -4,9 +4,11 @@ const dotenv = require('dotenv');
 
 dotenv.config();
 
+const isSSL = process.env.REDIS_URI && process.env.REDIS_URI.startsWith('rediss://');
+
 const connection = new Redis(process.env.REDIS_URI, {
   maxRetriesPerRequest: null,
-  tls: { rejectUnauthorized: false }
+  tls: isSSL ? { rejectUnauthorized: false } : undefined
 });
 
 connection.on('error', (err) => {

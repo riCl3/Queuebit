@@ -1,28 +1,41 @@
 {
   "name": "queuebit",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "Asynchronous document processing pipeline: queue-based uploads, LLM extraction (Groq/xAI), MongoDB persistence, and real-time Socket.IO updates with a terminal CLI.",
+  "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "worker": "node worker.js",
     "dev": "node server.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node --test test/integration.test.js"
   },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/riCl3/Queuebit.git"
   },
-  "keywords": [],
+  "keywords": [
+    "queue",
+    "bullmq",
+    "redis",
+    "mongodb",
+    "llm",
+    "groq",
+    "xai",
+    "document-processing",
+    "socket.io",
+    "cli"
+  ],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
+  "engines": {
+    "node": ">=20.19.0"
+  },
   "bugs": {
     "url": "https://github.com/riCl3/Queuebit/issues"
   },
   "homepage": "https://github.com/riCl3/Queuebit#readme",
   "dependencies": {
-    "@google/genai": "^1.48.0",
     "bullmq": "^5.73.0",
     "dotenv": "^17.4.0",
     "express": "^5.2.1",
@@ -30,9 +43,14 @@
     "mongodb": "^7.1.1",
     "mongoose": "^9.4.1",
     "multer": "^2.1.1",
+    "openai": "^5.3.0",
     "pdf-parse": "^2.4.5",
     "socket.io": "^4.8.3",
     "socket.io-client": "^4.8.3",
     "uuid": "^13.0.0"
+  },
+  "devDependencies": {
+    "pdf-lib": "^1.17.1",
+    "supertest": "^7.1.4"
   }
 }

@@ -11,9 +11,11 @@ dotenv.config();
 
 const QUEUE_NAME = 'document-processing-queue';
 
+const isSSL = process.env.REDIS_URI && process.env.REDIS_URI.startsWith('rediss://');
+
 const connection = new Redis(process.env.REDIS_URI, {
   maxRetriesPerRequest: null,
-  tls: { rejectUnauthorized: false }
+  tls: isSSL ? { rejectUnauthorized: false } : undefined
 });
 
 connection.on('connect', () => {
@@ -24,11 +26,21 @@ connection.on('error', (err) => {
   console.error('Worker Redis error:', err);
 });
 
+const OpenAI = require('openai');
+
 let ai;
 
 const initAI = async () => {
-  const { GoogleGenAI } = await import('@google/genai');
-  ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  const apiKey = process.env.AI_API_KEY || process.env.XAI_API_KEY || process.env.GROK_API_KEY;
+
+  if (!apiKey) {
+    throw new Error('AI_API_KEY environment variable is not set');
+  }
+
+  ai = new OpenAI({
+    apiKey,
+    baseURL: process.env.AI_BASE_URL || process.env.XAI_BASE_URL || 'https://api.groq.com/openai/v1'
+  });
 };
 
 const connectDB = async () => {
@@ -80,15 +92,16 @@ const extractDocumentData = async (filePath) => {
   if (ext === '.txt') {
     content = await fs.readFile(filePath, 'utf-8');
   } else if (ext === '.pdf') {
-    const pdfParse = require('pdf-parse');
+    const { PDFParse } = require('pdf-parse');
     const pdfBuffer = await fs.readFile(filePath);
-    const pdfData = await pdfParse(pdfBuffer);
-    content = pdfData.text;
+    const parser = new PDFParse({ data: pdfBuffer });
+    const pdfResult = await parser.getText();
+    content = pdfResult.text;
   } else {
     throw new Error('Unsupported file type');
   }
 
-  const model = 'gemini-3-flash-preview';
+  const model = process.env.AI_MODEL || 'llama-3.3-70b-versatile';
 
   const prompt = `Extract all names, dates, and key action items from the following text content. Return ONLY a strict JSON object with no additional text. The JSON should have this structure: {"names": [], "dates": [], "actionItems": []}. If no data is found for a category, return an empty array.
 
@@ -97,13 +110,18 @@ ${content}`;
 
   const timeoutMs = 30000;
   const result = await Promise.race([
-    ai.models.generateContent({
-      model: model,
-      contents: prompt
+    ai.chat.completions.create({
+      model,
+      messages: [
+        { role: 'system', content: 'You are a precise document information extractor. You always respond with valid JSON only.' },
+        { role: 'user', content: prompt }
+      ],
+      response_format: { type: 'json_object' },
+      temperature: 0
     }),
     new Promise((_, reject) => setTimeout(() => reject(new Error('AI call timed out')), timeoutMs))
   ]);
-  const text = result.text;
+  const text = result.choices[0].message.content;
 
   try {
     const jsonMatch = text.match(/\{[\s\S]*\}/);

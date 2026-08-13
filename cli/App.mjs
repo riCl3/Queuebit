@@ -11,7 +11,7 @@ var conf = new Conf({
   projectName: "queuebit",
   defaults: {
     apiKey: "",
-    model: "gemini-3-flash-preview"
+    model: "llama-3.3-70b-versatile"
   }
 });
 var api = axios.create({
@@ -42,7 +42,7 @@ var LOGO = [
 ];
 var SPINNER_FRAMES = ["\u280B", "\u2819", "\u2839", "\u2838", "\u283C", "\u2834", "\u2826", "\u2827", "\u2807", "\u280F"];
 var ROOT_COMMANDS = ["/upload ", "/model ", "/key ", "/clear", "/exit"];
-var MODELS = ["gemini-3-flash-preview", "gemini-1.5-pro", "gemini-2.0-flash-exp", "claude-3-haiku", "gpt-4o"];
+var MODELS = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "openai/gpt-oss-120b", "qwen/qwen3.6-27b"];
 var Logo = memo(() => /* @__PURE__ */ React.createElement(Box, { flexDirection: "column", alignItems: "center" }, LOGO.map((line, i) => /* @__PURE__ */ React.createElement(Text, { key: i, color: "#06b6d4", bold: true }, line))));
 function App() {
   const [query, setQuery] = useState("");
@@ -56,7 +56,7 @@ function App() {
   const pollingRef = useRef(null);
   const spinnerRef = useRef(null);
   const terminalHeight = useMemo(() => process.stdout.rows || 24, []);
-  const activeModel = useMemo(() => conf.get("model") || "gemini-3-flash-preview", []);
+  const activeModel = useMemo(() => conf.get("model") || "llama-3.3-70b-versatile", []);
   const filteredCommands = useMemo(() => {
     if (query.startsWith("/model ")) {
       const filter = query.replace("/model ", "").toLowerCase();

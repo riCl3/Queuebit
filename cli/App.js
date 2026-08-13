@@ -11,7 +11,7 @@ const conf = new Conf({
 	projectName: 'queuebit',
 	defaults: {
 		apiKey: '',
-		model: 'gemini-3-flash-preview'
+		model: 'llama-3.3-70b-versatile'
 	}
 });
 
@@ -48,7 +48,7 @@ const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', 
 
 const ROOT_COMMANDS = ['/upload ', '/model ', '/key ', '/clear', '/exit'];
 
-const MODELS = ['gemini-3-flash-preview', 'gemini-1.5-pro', 'gemini-2.0-flash-exp', 'claude-3-haiku', 'gpt-4o'];
+const MODELS = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'openai/gpt-oss-120b', 'qwen/qwen3.6-27b'];
 
 const Logo = memo(() => (
 	<Box flexDirection="column" alignItems="center">
@@ -71,7 +71,7 @@ export default function App() {
 	const spinnerRef = useRef(null);
 
 	const terminalHeight = useMemo(() => process.stdout.rows || 24, []);
-	const activeModel = useMemo(() => conf.get('model') || 'gemini-3-flash-preview', []);
+	const activeModel = useMemo(() => conf.get('model') || 'llama-3.3-70b-versatile', []);
 
 	const filteredCommands = useMemo(() => {
 		if (query.startsWith('/model ')) {

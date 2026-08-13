@@ -3,11 +3,15 @@ const http = require('http');
 const { Server } = require('socket.io');
 const mongoose = require('mongoose');
 const dotenv = require('dotenv');
+const multer = require('multer');
+const fs = require('fs');
 const { connectDB, disconnectDB } = require('./src/config/db');
 const { redisClient, connectRedis, disconnectRedis } = require('./src/config/redis');
 const apiRoutes = require('./src/routes/api');
 
 dotenv.config();
+
+fs.mkdirSync('uploads', { recursive: true });
 
 const app = express();
 const server = http.createServer(app);
@@ -19,6 +23,12 @@ const io = new Server(server, {
 });
 
 app.set('io', io);
+
+io.on('connection', (socket) => {
+  socket.on('job_updated', (data) => {
+    io.emit('job_updated', data);
+  });
+});
 
 const PORT = process.env.PORT || 3000;
 
@@ -40,6 +50,17 @@ app.get('/health', (req, res) => {
     mongodb: mongoStatus,
     redis: redisStatus
   });
+});
+
+app.use((err, req, res, next) => {
+  if (err instanceof multer.MulterError) {
+    const status = err.code === 'LIMIT_FILE_SIZE' ? 413 : 400;
+    return res.status(status).json({ error: err.message, code: err.code });
+  }
+  if (err) {
+    return res.status(400).json({ error: err.message });
+  }
+  next();
 });
 
 const gracefulShutdown = async (signal) => {
